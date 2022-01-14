@@ -4,8 +4,8 @@
 #include <rte_udp.h>
 #include <rte_tcp.h>
 
-hn_test_rss::hn_test_rss(u_int8_t ip_proto)
-    :proto(ip_proto)
+hn_test_rss::hn_test_rss(u_int32_t lcore_id, u_int8_t ip_proto)
+    :hn_test(lcore_id), proto(ip_proto)
 {
     ip_src =  inet_addr(ip_src_start_str.c_str());
     ip_dst =  inet_addr(ip_dst_start_str.c_str());
@@ -129,7 +129,9 @@ int hn_test_rss::process_rx_burst_pkts(rte_mbuf **m, u_int32_t size)
 }
 
 void hn_test_rss::show_the_test_results() 
-{}
+{
+    std::cout<<"The number of connections that received by lcore "<<lcore_id<<" is: "<<_5tuples.size()<<std::endl;
+}
 
 void hn_test_rss::create_base_pkt_tcp()
 {
@@ -237,4 +239,32 @@ void hn_test_rss::update_steps()
     ip_dst = htonl(htonl(ip_dst) + ip_dst_step);
     src_port = htons(htons(src_port) + src_port_step);
     dst_port = htons(htons(dst_port) + dst_port_step);
+}
+
+void hn_test_result_rss::show_test_results()
+{
+    u_int32_t confilicts = 0;
+    // check if any 5 tuples has been repeated in all lcores
+    std::unordered_map<ipv4_5tuple,u_int32_t,ipv4_5tuple_keyhasher> _5tuples;
+    for(auto test : tests)
+    {
+        auto test_5tuple = ((hn_test_rss *)test)->get_5tuples();
+        for(auto it = test_5tuple->begin(); it != test_5tuple->end(); it++)
+        {
+            if(_5tuples.count(it->first))
+                confilicts++;
+            else
+                _5tuples[it->first] = it->second;
+        }
+    }
+
+    if(confilicts)
+    {
+        std::cout<<"Test Result: Failed!!!   ->    There are "<<confilicts<<" conflicts during the test"<<std::endl;
+        exit(-1);
+    }
+    else
+    {
+        std::cout<<"Test Result: Success!!!";
+    }
 }

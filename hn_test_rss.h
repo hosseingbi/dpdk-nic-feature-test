@@ -90,7 +90,7 @@ private:
     void update_steps();
 
 public:
-    hn_test_rss(u_int8_t ip_proto = 17);
+    hn_test_rss(u_int32_t lcore_id, u_int8_t ip_proto = 17);
     ~hn_test_rss();
 
     /**
@@ -131,4 +131,17 @@ public:
      * 
      */
     void show_the_test_results() override;
+
+    std::unordered_map<ipv4_5tuple,u_int32_t,ipv4_5tuple_keyhasher> *get_5tuples() {return &_5tuples;}
+};
+
+
+class hn_test_result_rss: public hn_test_result
+{
+
+public:
+    hn_test_result_rss(std::vector<hn_test *> tests)
+        :hn_test_result(tests) {}
+
+    void show_test_results() override;
 };

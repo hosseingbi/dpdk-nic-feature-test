@@ -1,10 +1,13 @@
 #include <iostream>
+#include <vector>
 #include <rte_mbuf.h>
 
 class hn_test
 {
+protected:
+    u_int32_t lcore_id;
 public:
-    hn_test(){}
+    hn_test(u_int32_t lcore_id):lcore_id(lcore_id){}
     ~hn_test(){}
 
     /**
@@ -45,4 +48,18 @@ public:
      * 
      */
     virtual void show_the_test_results() = 0;
+
+    u_int32_t get_lcore_id() {return lcore_id;}
+};
+
+
+class hn_test_result
+{
+protected:
+    std::vector<hn_test *> tests;
+
+public:
+    hn_test_result(std::vector<hn_test *> tests):tests(tests) {}
+
+    virtual void show_test_results() = 0;
 };

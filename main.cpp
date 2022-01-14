@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <unistd.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <string.h>
@@ -12,6 +13,7 @@
 #include <sys/param.h>
 #include <iostream>
 #include <vector>
+#include <mutex>
 
 #include <rte_common.h>
 #include <rte_byteorder.h>
@@ -74,17 +76,23 @@
 #define RTE_TEST_RX_DESC_DEFAULT 1024
 #define RTE_TEST_TX_DESC_DEFAULT 1024
 #define MAX_PKT_BURST 32
+#define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
 
 static rte_mempool *pktmbuf_pool[RTE_MAX_ETHPORTS][NB_SOCKETS];
 static rte_mempool *pktmbuf_tx_pool[RTE_MAX_ETHPORTS][RTE_MAX_LCORE];
 static std::vector<u_int32_t> lcoreids;
 static std::vector<u_int32_t> rx_lcoreids;
 static std::vector<u_int32_t> tx_lcoreids;
+static hn_test *hn_tests[RTE_MAX_LCORE];
 
 static rte_eth_conf port_conf;
 
 static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
+static bool test_is_running = true;
+static u_int32_t nb_test_finished = 0;
+static std::mutex test_mutex;
+
 
 static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 {
@@ -144,6 +152,144 @@ void non_trivial_init()
 	port_conf.rx_adv_conf.rss_conf.rss_hf = RTE_ETH_RSS_IP;
 	port_conf.txmode.mq_mode = RTE_ETH_MQ_TX_NONE;
 	port_conf.txmode.offloads = (RTE_ETH_TX_OFFLOAD_IPV4_CKSUM | RTE_ETH_TX_OFFLOAD_MULTI_SEGS);
+}
+
+void *print_stats(__rte_unused void *dummy) 
+{
+	while(true)
+	{
+		// print stats
+		sleep(1);
+	}
+}
+
+void print_final_result()
+{}
+
+/**
+ * @brief 
+ * 		wait for all the tests to be finished. Then you can set the test_is_running flag to false
+ */
+static void join_all_tests()
+{
+	test_mutex.lock();
+	nb_test_finished++;
+	test_mutex.unlock();
+	while(nb_test_finished < tx_lcoreids.size()) {usleep(10000);}
+	
+	test_is_running = false;
+}
+
+void rx_main_loop(u_int32_t lcore_id, u_int16_t queueu_id)
+{
+	rte_mbuf *pkts_burst[MAX_PKT_BURST];
+
+	while (test_is_running) 
+	{
+		u_int16_t nb_rx = rte_eth_rx_burst(1/* portid */, queueu_id, pkts_burst, MAX_PKT_BURST);
+		if(hn_tests[lcore_id]->process_rx_burst_pkts(pkts_burst, nb_rx) < 0)
+		{
+			std::cerr<<"The test ended due to some technical failure"<<std::endl;
+			exit(-1);
+		}
+	}
+}
+
+void tx_main_loop(u_int32_t lcore_id, u_int32_t queue_id)
+{
+	rte_mbuf *pkts_burst[MAX_PKT_BURST];
+	uint64_t diff_tsc, cur_tsc, prev_tsc;
+	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+	prev_tsc = 0;
+	u_int16_t burst_offset = 0;
+	u_int32_t ret_burst_size = 0;
+
+	while(true)
+	{
+		cur_tsc = rte_rdtsc();
+
+		/*
+		 * TX burst queue drain
+		 */
+		diff_tsc = cur_tsc - prev_tsc;
+		if (unlikely(diff_tsc > drain_tsc)) 
+		{
+			if(!burst_offset)
+			{
+				int ret = hn_tests[lcore_id]->get_burst_pkts(pkts_burst, MAX_PKT_BURST, ret_burst_size, pktmbuf_tx_pool[0][lcore_id]);
+				if(ret == -1)
+				{
+					std::cerr<<"Some technical errors occured during sending the pkts!!!"<<std::endl;
+					exit(-1);
+				}
+				else if(ret == 0)
+					break; // end of the test
+			}
+
+			u_int16_t sent = rte_eth_tx_burst(0/*port id*/, queue_id, &pkts_burst[burst_offset], ret_burst_size - burst_offset);
+			burst_offset += sent;
+			if(burst_offset >= ret_burst_size)
+				burst_offset = 0;
+			prev_tsc = cur_tsc;
+		}
+	}
+
+	join_all_tests();
+}
+
+static int main_loop(__rte_unused void *dummy)
+{
+	u_int32_t lcore_id = rte_lcore_id();
+	enum LcoreType{LCORE_T_NONE = 0, LCORE_T_RX = 1, LCORE_T_TX = 2} lcore_type;
+	lcore_type = LCORE_T_NONE;
+	u_int32_t queue_id = 0;
+
+	for(u_int32_t i=0; i<rx_lcoreids.size(); i++)
+	{
+		if(rx_lcoreids[i] == lcore_id)
+		{
+			lcore_type = LCORE_T_RX;
+			queue_id = i;
+			break;
+		}
+	}
+
+	if(lcore_type == LCORE_T_NONE)
+	{
+		for(u_int32_t i=0; i<tx_lcoreids.size(); i++)
+		{
+			if(tx_lcoreids[i] == lcore_id)
+			{
+				lcore_type = LCORE_T_TX;
+				queue_id = i;
+				break;
+			}
+		}
+	}
+
+	if(lcore_id == rte_get_main_lcore())
+	{
+		pthread_t th_stats;
+		pthread_create(&th_stats, NULL, print_stats, NULL);
+	}
+
+	switch(lcore_type)
+	{
+	case LCORE_T_NONE:
+		std::cerr<<"lcore is not categorized neither of RX and TX cores!!!"<<std::endl;
+		return -1;
+		break;
+
+	case LCORE_T_RX:
+		tx_main_loop(lcore_id, queue_id);
+		break;
+
+	case LCORE_T_TX:
+		rx_main_loop(lcore_id, queue_id);
+		break;
+	}
+
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -254,9 +400,22 @@ int main(int argc, char **argv)
 			if (ret < 0)
 				rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n", ret, portid);
 		}
-
-		
 	}
+
+	u_int32_t lcore_id;
+	/* launch per-lcore init on every lcore */
+	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MAIN);
+	RTE_LCORE_FOREACH_WORKER(lcore_id) 
+	{
+		if (rte_eal_wait_lcore(lcore_id) < 0)
+			return -1;
+	}
+
+	/* print the result of the test */
+	print_final_result();
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
 
     return 0;
 }
