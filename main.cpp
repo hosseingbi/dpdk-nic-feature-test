@@ -13,6 +13,7 @@
 #include <sys/param.h>
 #include <iostream>
 #include <vector>
+#include <map>
 #include <mutex>
 
 #include <rte_common.h>
@@ -93,6 +94,101 @@ static bool test_is_running = true;
 static u_int32_t nb_test_finished = 0;
 static std::mutex test_mutex;
 
+enum TestType{HN_TEST_TYPE_RSS_IP = 0, HN_TEST_TYPE_RSS_UDP, HN_TEST_TYPE_RSS_TCP, HN_TEST_TYPE_FDIR}hn_test_type;
+static std::map<std::string, TestType> test_valid_types = {{"RSS_IP",HN_TEST_TYPE_RSS_IP}, {"RSS_UDP",HN_TEST_TYPE_RSS_UDP}, 
+															{"RSS_TCP",HN_TEST_TYPE_RSS_TCP}, {"FDIR",HN_TEST_TYPE_FDIR}};
+
+
+static void print_usage(const char *prgname)
+{
+	std::string valid_types;
+	for(auto it = test_valid_types.begin(); it != test_valid_types.end(); it++)
+	{
+		if(it != test_valid_types.begin())
+			valid_types += "|";
+		valid_types += it->first;
+	}
+	printf("%s [EAL options] -- --type <valid_type>\n\n"
+	"Valid Types are: %s\n",
+	prgname, valid_types.c_str());
+}
+
+static int parse_type(char *type)
+{
+	std::string type_str(type);
+	bool found = false;
+	for(auto vtype : test_valid_types)
+	{
+		if(vtype.first == type_str)
+		{
+			hn_test_type = vtype.second;
+			found = true;
+			break;
+		}
+	}
+	if(!found)
+	{
+		std::cout<<"Wrong test type!!!"<<std::endl;
+		std::cout<<"Valid types are: ";
+		for(auto vtype : test_valid_types)
+			std::cout<<vtype.first<<" ";
+		std::cout<<std::endl;
+		return -1;
+	}
+
+	return 0;
+}
+
+/**
+ * @brief 
+ * 		Parse the argument given in the command line of the application
+ * @param argc 
+ * @param argv 
+ * @return int 
+ */
+static int parse_args(int argc, char **argv)
+{
+	int opt, ret;
+	char **argvopt;
+	int option_index;
+	char *prgname = argv[0];
+	static struct option lgopts[] = {
+		{"type", required_argument, NULL, 0}
+	};
+
+	argvopt = argv;
+
+	while ((opt = getopt_long(argc, argvopt, "h", lgopts, &option_index)) != EOF) {
+
+		switch (opt) {
+		case 'h':
+			print_usage(prgname);
+			break;
+
+		/* long options */
+		case 0:
+			if (!strncmp(lgopts[option_index].name, "type", 4)) 
+			{
+				int ret = parse_type(optarg);
+				if(ret < 0)
+					return -1;
+			}
+
+			break;
+
+		default:
+			print_usage(prgname);
+			return -1;
+		}
+	}
+
+	if (optind >= 0)
+		argv[optind-1] = prgname;
+
+	ret = optind-1;
+	optind = 1; /* reset getopt lib */
+	return ret;
+}
 
 static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 {
@@ -300,10 +396,23 @@ int main(int argc, char **argv)
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid EAL parameters\n");
+	argc -= ret;
+	argv += ret;
+
+	ret = parse_args(argc, argv);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "Invalid hn_test parameters\n");
+	
 
     u_int32_t nb_ports = rte_eth_dev_count_avail();
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No ports found!\n");
+
+	if(nb_ports != 2)
+	{
+		std::cerr<<"Number of ports should be equal to 2"<<std::endl;
+		exit(-1);
+	}
 
 	for (u_int32_t lcore_id = 0, i=0; lcore_id < RTE_MAX_LCORE; lcore_id++) 
 	{
