@@ -1,3 +1,6 @@
+#ifndef HN_TEST_RSS_H
+#define HN_TEST_RSS_H
+
 #include <iostream>
 #include <memory>
 #include <rte_mbuf.h>
@@ -94,6 +97,22 @@ public:
     ~hn_test_rss();
 
     /**
+     * @brief Create a udp object
+     *      creates a udp instance of this object
+     * @param lcore 
+     * @return hn_test* 
+     */
+    static hn_test* create_udp(u_int32_t lcore) { return new hn_test_rss(lcore, 0x11);}
+
+    /**
+     * @brief Create a tcp object
+     *      creates a tcp instance of this object
+     * @param lcore 
+     * @return hn_test* 
+     */
+    static hn_test* create_tcp(u_int32_t lcore) {return new hn_test_rss(lcore, 0x06); }
+
+    /**
      * @brief Get a burst of mbufs from the given mempool and prepared them for the test.
      * 
      * @param m 
@@ -145,3 +164,5 @@ public:
 
     void show_test_results() override;
 };
+
+#endif // HN_TEST_RSS_H

@@ -42,6 +42,8 @@
 #include <rte_string_fns.h>
 
 #include "hn_test_rss.h"
+#include "hn_driver_ixgbe.h"
+#include "hn_driver_mlx5.h"
 
 #define NB_SOCKETS        8
 #define MEMPOOL_CACHE_SIZE 256
@@ -94,20 +96,28 @@ static bool test_is_running = true;
 static u_int32_t nb_test_finished = 0;
 static std::mutex test_mutex;
 
-enum TestType{HN_TEST_TYPE_RSS_IP = 0, HN_TEST_TYPE_RSS_UDP, HN_TEST_TYPE_RSS_TCP, HN_TEST_TYPE_FDIR}hn_test_type;
-static std::map<std::string, TestType> test_valid_types = {{"RSS_IP",HN_TEST_TYPE_RSS_IP}, {"RSS_UDP",HN_TEST_TYPE_RSS_UDP}, 
-															{"RSS_TCP",HN_TEST_TYPE_RSS_TCP}, {"FDIR",HN_TEST_TYPE_FDIR}};
+static hn_test_extend test_types;
+static std::function<hn_test*(u_int32_t)> test_creator_handler;
+static hn_driver_extend nic_drivers;
+
+static void register_test_types()
+{
+	test_types.register_test("rss_ip", hn_test_rss::create_udp);
+	test_types.register_test("rss_udp", hn_test_rss::create_udp);
+	test_types.register_test("rss_tcp", hn_test_rss::create_tcp);
+	// test_types.register_test("fdir", hn_test_fdir::create);
+}
+
+static void register_drivers()
+{
+	nic_drivers.register_driver("net_ixgbe", hn_driver_ixgbe::create);
+	nic_drivers.register_driver("net_mlx5", hn_driver_mlx5::create);
+}
 
 
 static void print_usage(const char *prgname)
 {
-	std::string valid_types;
-	for(auto it = test_valid_types.begin(); it != test_valid_types.end(); it++)
-	{
-		if(it != test_valid_types.begin())
-			valid_types += "|";
-		valid_types += it->first;
-	}
+	std::string valid_types = test_types.get_all_types_name_str();	
 	printf("%s [EAL options] -- --type <valid_type>\n\n"
 	"Valid Types are: %s\n",
 	prgname, valid_types.c_str());
@@ -116,23 +126,12 @@ static void print_usage(const char *prgname)
 static int parse_type(char *type)
 {
 	std::string type_str(type);
-	bool found = false;
-	for(auto vtype : test_valid_types)
-	{
-		if(vtype.first == type_str)
-		{
-			hn_test_type = vtype.second;
-			found = true;
-			break;
-		}
-	}
-	if(!found)
+
+	test_creator_handler = test_types.get_creator_handler(type_str);
+	if(!test_creator_handler)
 	{
 		std::cout<<"Wrong test type!!!"<<std::endl;
-		std::cout<<"Valid types are: ";
-		for(auto vtype : test_valid_types)
-			std::cout<<vtype.first<<" ";
-		std::cout<<std::endl;
+		std::cout<<"Valid types are: "<< test_types.get_all_types_name_str()<<std::endl;		
 		return -1;
 	}
 
@@ -190,6 +189,67 @@ static int parse_args(int argc, char **argv)
 	return ret;
 }
 
+/* Check the link status of all ports in up to 9s, and print them finally */
+static void check_all_ports_link_status()
+{
+#define CHECK_INTERVAL 100 /* 100ms */
+#define MAX_CHECK_TIME 90 /* 9s (90 * 100ms) in total */
+	uint16_t portid;
+	uint8_t count, all_ports_up, print_flag = 0;
+	struct rte_eth_link link;
+	int ret;
+	char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
+
+	printf("\nChecking link status");
+	fflush(stdout);
+	for (count = 0; count <= MAX_CHECK_TIME; count++) 
+	{
+		all_ports_up = 1;
+		RTE_ETH_FOREACH_DEV(portid) 
+		{
+			memset(&link, 0, sizeof(link));
+			ret = rte_eth_link_get_nowait(portid, &link);
+			if (ret < 0) 
+			{
+				all_ports_up = 0;
+				if (print_flag == 1)
+					printf("Port %u link get failed: %s\n", portid, rte_strerror(-ret));
+				continue;
+			}
+			/* print link status if flag set */
+			if (print_flag == 1) 
+			{
+				rte_eth_link_to_str(link_status_text, sizeof(link_status_text), &link);
+				printf("Port %d %s\n", portid, link_status_text);
+				continue;
+			}
+			/* clear all_ports_up flag if any link down */
+			if (link.link_status == RTE_ETH_LINK_DOWN) 
+			{
+				all_ports_up = 0;
+				break;
+			}
+		}
+		/* after finally printing all link status, get out */
+		if (print_flag == 1)
+			break;
+
+		if (all_ports_up == 0) 
+		{
+			printf(".");
+			fflush(stdout);
+			rte_delay_ms(CHECK_INTERVAL);
+		}
+
+		/* set the print_flag if all ports up or timeout */
+		if (all_ports_up == 1 || count == (MAX_CHECK_TIME - 1)) 
+		{
+			print_flag = 1;
+			printf("\ndone\n");
+		}
+	}
+}
+
 static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 {
 	char buf[PATH_MAX];
@@ -240,12 +300,11 @@ static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 
 void non_trivial_init()
 {	
-	port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+	port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_NONE;
 	port_conf.rxmode.mtu = JUMBO_FRAME_MAX_SIZE - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN;
 	port_conf.rxmode.split_hdr_size = 0;
 	port_conf.rxmode.offloads = RTE_ETH_RX_OFFLOAD_CHECKSUM;
 	port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
-	port_conf.rx_adv_conf.rss_conf.rss_hf = RTE_ETH_RSS_IP;
 	port_conf.txmode.mq_mode = RTE_ETH_MQ_TX_NONE;
 	port_conf.txmode.offloads = (RTE_ETH_TX_OFFLOAD_IPV4_CKSUM | RTE_ETH_TX_OFFLOAD_MULTI_SEGS);
 }
@@ -391,6 +450,8 @@ static int main_loop(__rte_unused void *dummy)
 int main(int argc, char **argv)
 {
 	non_trivial_init();
+	register_test_types();
+	register_drivers();
 
     /* init EAL */
 	int ret = rte_eal_init(argc, argv);
@@ -427,6 +488,24 @@ int main(int argc, char **argv)
 		i++;
 	}
 
+	if(lcoreids.size() == 0)
+	{
+		std::cerr<<"The number of Lcores can not be zero"<<std::endl;
+		exit(-1);
+	}
+
+	if(lcoreids.size() % 2)
+	{
+		std::cerr<<"The number of Lcores should be even"<<std::endl;
+		exit(-1);
+	}
+
+	// initializing test instances
+	for(auto lcore : lcoreids)
+	{
+		hn_tests[lcore] = test_creator_handler(lcore);
+	}
+
 	u_int32_t nb_mbuf = RTE_MAX((nb_ports * rx_lcoreids.size() * nb_rxd + nb_ports * rx_lcoreids.size() * MAX_PKT_BURST + nb_ports * rx_lcoreids.size() * nb_rxd + 
 									rx_lcoreids.size() * MEMPOOL_CACHE_SIZE), (unsigned)8192);
 	u_int32_t nb_tx_mbuf = RTE_MAX((nb_ports * tx_lcoreids.size() * nb_txd + nb_ports * tx_lcoreids.size() * MAX_PKT_BURST + nb_ports * tx_lcoreids.size() * nb_txd + 
@@ -435,7 +514,6 @@ int main(int argc, char **argv)
     uint16_t portid;
 	RTE_ETH_FOREACH_DEV(portid) 
 	{
-
 		init_mem(portid, nb_mbuf, nb_tx_mbuf);
 
 		rte_eth_conf local_port_conf = port_conf;
@@ -450,10 +528,18 @@ int main(int argc, char **argv)
 		local_port_conf.rxmode.mtu = RTE_MIN( dev_info.max_mtu, local_port_conf.rxmode.mtu);
 		if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE)
 			local_port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
-		local_port_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info.flow_type_rss_offloads;
-		if (local_port_conf.rx_adv_conf.rss_conf.rss_hf != port_conf.rx_adv_conf.rss_conf.rss_hf) 
-			printf("Port %u modified RSS hash function based on hardware support,requested:%#" PRIx64 " configured:%#" PRIx64 "\n", portid,
-				port_conf.rx_adv_conf.rss_conf.rss_hf, local_port_conf.rx_adv_conf.rss_conf.rss_hf);
+		// local_port_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info.flow_type_rss_offloads;
+		// if (local_port_conf.rx_adv_conf.rss_conf.rss_hf != port_conf.rx_adv_conf.rss_conf.rss_hf) 
+		// 	printf("Port %u modified RSS hash function based on hardware support,requested:%#" PRIx64 " configured:%#" PRIx64 "\n", portid,
+		// 		port_conf.rx_adv_conf.rss_conf.rss_hf, local_port_conf.rx_adv_conf.rss_conf.rss_hf);
+
+		auto driver_creator_handler = nic_drivers.get_creator_handler(std::string(dev_info.driver_name));
+		if(!driver_creator_handler)
+			exit(-1);
+		
+		// set driver global configuration
+		std::shared_ptr<hn_driver> driver = std::shared_ptr<hn_driver>(driver_creator_handler());
+		hn_tests[0]->update_nic_global_config(driver.get(), portid, local_port_conf);
 
 		int socket = rte_lcore_to_socket_id(portid);
 		if (socket == SOCKET_ID_ANY)
@@ -465,11 +551,10 @@ int main(int argc, char **argv)
 		
 		
 		ret = rte_eth_dev_configure(portid, (uint16_t)rx_lcoreids.size(), (uint16_t)tx_lcoreids.size(), &local_port_conf);
-		if (ret < 0) {
+		if (ret < 0) 
+		{
 			printf("\n");
-			rte_exit(EXIT_FAILURE, "Cannot configure device: "
-				"err=%d, port=%d\n",
-				ret, portid);
+			rte_exit(EXIT_FAILURE, "Cannot configure device: " "err=%d, port=%d\n", ret, portid);
 		}
 
 		// initialize tx queues
@@ -509,12 +594,26 @@ int main(int argc, char **argv)
 			if (ret < 0)
 				rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n", ret, portid);
 		}
+
+		/* Start device */
+		ret = rte_eth_dev_start(portid);
+		if (ret < 0)
+			rte_exit(EXIT_FAILURE, "rte_eth_dev_start: err=%d, port=%d\n", ret, portid);
+
+		ret = rte_eth_promiscuous_enable(portid);
+		if (ret != 0)
+			rte_exit(EXIT_FAILURE, "rte_eth_promiscuous_enable: err=%s, port=%d\n", rte_strerror(-ret), portid);
+
+		// set driver after nic start configuration
+		hn_tests[0]->update_nic_after_start(driver.get(), portid);
 	}
+
+	check_all_ports_link_status();
 
 	u_int32_t lcore_id;
 	/* launch per-lcore init on every lcore */
 	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MAIN);
-	RTE_LCORE_FOREACH_WORKER(lcore_id) 
+	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;

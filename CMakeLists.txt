@@ -4,7 +4,7 @@ project(mlx5-test VERSION 0.1.0)
 include(CTest)
 enable_testing()
 
-add_executable(mlx5-test main.cpp hn_test_rss.cpp)
+add_executable(mlx5-test main.cpp hn_test_rss.cpp hn_driver_mlx5.cpp hn_driver_ixgbe.cpp)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
