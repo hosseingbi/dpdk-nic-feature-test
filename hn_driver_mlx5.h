@@ -19,8 +19,6 @@ public:
      */
     static hn_driver* create() { return new hn_driver_mlx5();}
 
-    void set_fdir_global_config(u_int16_t port_id, rte_eth_conf &port_conf) override;
-    void set_fdir_filter(u_int16_t port_id) override;
 
 };
 

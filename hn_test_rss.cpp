@@ -54,6 +54,23 @@ int hn_test_rss::get_burst_pkts(rte_mbuf **m, u_int32_t max_burst_size, u_int32_
 
         memcpy((char*)tx_eth_hdr, base_pkt.get(), base_pkt_size);
 
+        // update ip header
+        tx_ip_hdr->src_addr = ip_src;
+        tx_ip_hdr->dst_addr = ip_dst;
+        
+        // update transport layer
+        if(proto == 0x06) // tcp
+        {
+            tx_tcp_hdr->src_port = src_port;
+            tx_tcp_hdr->dst_port = dst_port;
+        }
+        else if (proto == 0x11) // udp
+        {
+            tx_udp_hdr->src_port = src_port;
+            tx_udp_hdr->dst_port = dst_port;
+        }
+
+
         tx_mbuf->l2_len = sizeof(rte_ether_hdr);
         tx_mbuf->l2_type = 1;
         tx_mbuf->l3_len = sizeof(rte_ipv4_hdr);
@@ -226,10 +243,12 @@ void hn_test_rss::create_base_pkt_udp()
     //filling udp_header
     tx_udp_hdr->src_port = src_port;
     tx_udp_hdr->dst_port = dst_port;
-    tx_udp_hdr->dgram_len = udp_header_size + payload_size;
+    tx_udp_hdr->dgram_len = htons(udp_header_size + payload_size);
     tx_udp_hdr->dgram_cksum = 0;
 
     memset(tx_payload, 'X', payload_size);
+
+    base_pkt_size = sizeof(rte_ether_hdr) + sizeof(rte_ipv4_hdr) + udp_header_size + payload_size;
 
 }
 
@@ -239,6 +258,11 @@ void hn_test_rss::update_steps()
     ip_dst = htonl(htonl(ip_dst) + ip_dst_step);
     src_port = htons(htons(src_port) + src_port_step);
     dst_port = htons(htons(dst_port) + dst_port_step);
+}
+
+void hn_test_rss::update_nic_global_config(hn_driver *nic_driver, u_int16_t port_id, rte_eth_conf &port_conf) 
+{
+    nic_driver->set_rss_config(port_id, port_conf);
 }
 
 void hn_test_result_rss::show_test_results()
@@ -265,6 +289,7 @@ void hn_test_result_rss::show_test_results()
     }
     else
     {
-        std::cout<<"Test Result: Success!!!";
+        std::cout<<"Test Result: Success!!!"<<std::endl;
     }
 }
+

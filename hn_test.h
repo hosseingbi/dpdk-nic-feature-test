@@ -8,6 +8,34 @@
 #include <rte_mbuf.h>
 #include "hn_driver.h"
 
+struct ipv4_5tuple
+{
+    u_int32_t ip_src;
+    u_int32_t ip_dst;
+    u_int16_t port_src;
+    u_int16_t port_dst;
+    u_int8_t  proto;
+    inline bool operator==(const ipv4_5tuple &other) const
+    {
+        if(ip_src == other.ip_src && ip_dst == other.ip_dst && port_src == other.port_src && port_dst == other.port_dst && proto == other.proto)
+            return true;
+        else
+            return false;
+    }
+    inline ipv4_5tuple& operator=(const ipv4_5tuple &rhs)
+    {
+        if (this == &rhs)      
+            return *this;
+        
+        this->ip_src = rhs.ip_src;
+        this->ip_dst = rhs.ip_dst;
+        this->port_src = rhs.port_src;
+        this->port_dst = rhs.port_dst;
+        this->proto = rhs.proto;        
+        return *this;
+    }
+}__attribute__((__packed__));
+
 class hn_test
 {
 protected:
@@ -55,9 +83,9 @@ public:
      */
     virtual void show_the_test_results() = 0;
 
-    virtual void update_nic_global_config(hn_driver *nic_driver, u_int16_t port_id, rte_eth_conf &port_conf) {}
+    virtual void update_nic_global_config(hn_driver *nic_driver, u_int16_t port_id, rte_eth_conf &port_conf) = 0;
 
-    virtual void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id) {}
+    virtual void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id) = 0;
 
     u_int32_t get_lcore_id() {return lcore_id;}
 };
@@ -81,6 +109,7 @@ private:
      * @brief it keeps a mapping between the name of the type of the test and a function that creates an instance of that test.
      */
     std::map<std::string, std::function<hn_test*(u_int32_t)>> test_map;
+    std::map<std::string, std::function<hn_test_result*(std::vector<hn_test *>)>> test_result_map;
 public:
 
     /**
@@ -107,15 +136,26 @@ public:
      * @param test_type_name 
      * @param test_creator_handler 
      */
-    void register_test(std::string test_type_name, std::function<hn_test*(u_int32_t)> test_creator_handler)
+    void register_test(std::string test_type_name, std::function<hn_test*(u_int32_t)> test_creator_handler, 
+                        std::function<hn_test_result*(std::vector<hn_test *>)> test_result_creator_handler)
     {
         test_map[test_type_name] = test_creator_handler;
+        test_result_map[test_type_name] = test_result_creator_handler;
     }
 
-    std::function<hn_test*(u_int32_t)> get_creator_handler(std::string test_type_name) 
+    std::function<hn_test*(u_int32_t)> get_test_creator_handler(std::string test_type_name) 
     {
         auto it = test_map.find(test_type_name);
         if(it == test_map.end())
+            return nullptr;
+        
+        return it->second;
+    }
+
+    std::function<hn_test_result*(std::vector<hn_test *> tests)> get_test_result_creator_handler(std::string test_type_name) 
+    {
+        auto it = test_result_map.find(test_type_name);
+        if(it == test_result_map.end())
             return nullptr;
         
         return it->second;

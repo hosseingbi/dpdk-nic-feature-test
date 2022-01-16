@@ -4,7 +4,7 @@ project(mlx5-test VERSION 0.1.0)
 include(CTest)
 enable_testing()
 
-add_executable(mlx5-test main.cpp hn_test_rss.cpp hn_driver_mlx5.cpp hn_driver_ixgbe.cpp)
+add_executable(mlx5-test main.cpp hn_test_rss.cpp hn_test_fdir.cpp hn_driver.cpp hn_driver_mlx5.cpp hn_driver_ixgbe.cpp )
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
@@ -66,7 +66,7 @@ list(APPEND DPDK_INCLUDE_PATHS ${DPDK_BASE_PATH}/build)
 
 set(DPDK_DEFS _FILE_OFFSET_BITS=64 _GNU_SOURCE ALLOW_EXPERIMENTAL_API)
 
-set(DPDK_FLAGS "-pipe -Wall -Winvalid-pch -O3 -include rte_config.h -Wextra -Wcast-qual -Wdeprecated -Wformat -Wformat-nonliteral -Wundef -Wwrite-strings -Wno-missing-field-initializers -march=native -MD -MQ -m32 -mssse3")
+set(DPDK_FLAGS "-pipe -Wall -Winvalid-pch -include rte_config.h -Wextra -Wcast-qual -Wdeprecated -Wformat -Wformat-nonliteral -Wundef -Wwrite-strings -Wno-missing-field-initializers -march=native -MD -MQ -m32 -mssse3")
 
 target_include_directories(mlx5-test PRIVATE . ${DPDK_INCLUDE_PATHS})
 target_link_directories(mlx5-test PRIVATE ${DPDK_LIB_DIR} ${DPDK_DRIVERS_LIB_DIR})

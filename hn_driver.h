@@ -6,20 +6,20 @@
 #include <functional>
 #include <rte_ethdev.h>
 
+#define MAX_PATTERN_NUM         3
+#define MAX_ACTION_NUM          2
+
 class hn_driver
 {
+protected:
+    int flow_dir_filter_config(u_int32_t portid, u_int32_t queue_id, uint8_t *flexbytes);
 public:
     hn_driver() {}
     ~hn_driver() {}
 
-    virtual void set_rss_config(u_int16_t port_id, rte_eth_conf &port_conf) 
-    {
-        port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
-        port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
-        port_conf.rx_adv_conf.rss_conf.rss_hf = ETH_RSS_NONFRAG_IPV4_TCP | ETH_RSS_NONFRAG_IPV4_UDP | ETH_RSS_NONFRAG_IPV6_TCP | ETH_RSS_NONFRAG_IPV6_UDP;
-    }
-    virtual void set_fdir_global_config(u_int16_t port_id, rte_eth_conf &port_conf) {}
-    virtual void set_fdir_filter(u_int16_t port_id) {}
+    virtual void set_rss_config(u_int16_t port_id, rte_eth_conf &port_conf);
+    virtual void set_fdir_global_config(u_int16_t port_id, rte_eth_conf &port_conf);
+    virtual void set_fdir_filter(u_int16_t port_id);
 
 };
 

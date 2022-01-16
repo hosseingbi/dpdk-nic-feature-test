@@ -8,34 +8,6 @@
 #include <rte_hash_crc.h>
 #include "hn_test.h"
 
-struct ipv4_5tuple
-{
-    u_int32_t ip_src;
-    u_int32_t ip_dst;
-    u_int16_t port_src;
-    u_int16_t port_dst;
-    u_int8_t  proto;
-    inline bool operator==(const ipv4_5tuple &other) const
-    {
-        if(ip_src == other.ip_src && ip_dst == other.ip_dst && port_src == other.port_src && port_dst == other.port_dst && proto == other.proto)
-            return true;
-        else
-            return false;
-    }
-    inline ipv4_5tuple& operator=(const ipv4_5tuple &rhs)
-    {
-        if (this == &rhs)      
-            return *this;
-        
-        this->ip_src = rhs.ip_src;
-        this->ip_dst = rhs.ip_dst;
-        this->port_src = rhs.port_src;
-        this->port_dst = rhs.port_dst;
-        this->proto = rhs.proto;        
-        return *this;
-    }
-}__attribute__((__packed__));
-
 static inline uint32_t ipv4_hash_crc(const void *data, __rte_unused uint32_t data_len, uint32_t init_val)
 {
     const struct ipv4_5tuple *k;
@@ -151,18 +123,26 @@ public:
      */
     void show_the_test_results() override;
 
+    void update_nic_global_config(hn_driver *nic_driver, u_int16_t port_id, rte_eth_conf &port_conf) override;
+
+    void update_nic_after_start(__rte_unused hn_driver *nic_driver, __rte_unused u_int16_t port_id) override {}
+
     std::unordered_map<ipv4_5tuple,u_int32_t,ipv4_5tuple_keyhasher> *get_5tuples() {return &_5tuples;}
+    
 };
 
 
 class hn_test_result_rss: public hn_test_result
 {
-
 public:
     hn_test_result_rss(std::vector<hn_test *> tests)
         :hn_test_result(tests) {}
 
+
+    static hn_test_result_rss* create(std::vector<hn_test *> tests) { return new hn_test_result_rss(tests);}
+
     void show_test_results() override;
+    
 };
 
 #endif // HN_TEST_RSS_H

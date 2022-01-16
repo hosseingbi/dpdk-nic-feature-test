@@ -42,6 +42,7 @@
 #include <rte_string_fns.h>
 
 #include "hn_test_rss.h"
+#include "hn_test_fdir.h"
 #include "hn_driver_ixgbe.h"
 #include "hn_driver_mlx5.h"
 
@@ -87,6 +88,7 @@ static std::vector<u_int32_t> lcoreids;
 static std::vector<u_int32_t> rx_lcoreids;
 static std::vector<u_int32_t> tx_lcoreids;
 static hn_test *hn_tests[RTE_MAX_LCORE];
+static hn_test_result *hn_tests_result;
 
 static rte_eth_conf port_conf;
 
@@ -98,14 +100,15 @@ static std::mutex test_mutex;
 
 static hn_test_extend test_types;
 static std::function<hn_test*(u_int32_t)> test_creator_handler;
+static std::function<hn_test_result*(std::vector<hn_test *>)> test_result_creator_handler;
 static hn_driver_extend nic_drivers;
 
 static void register_test_types()
 {
-	test_types.register_test("rss_ip", hn_test_rss::create_udp);
-	test_types.register_test("rss_udp", hn_test_rss::create_udp);
-	test_types.register_test("rss_tcp", hn_test_rss::create_tcp);
-	// test_types.register_test("fdir", hn_test_fdir::create);
+	test_types.register_test("rss_ip", hn_test_rss::create_udp, hn_test_result_rss::create);
+	test_types.register_test("rss_udp", hn_test_rss::create_udp, hn_test_result_rss::create);
+	test_types.register_test("rss_tcp", hn_test_rss::create_tcp, hn_test_result_rss::create);
+	test_types.register_test("fdir", hn_test_fdir::create, hn_test_result_fdir::create);
 }
 
 static void register_drivers()
@@ -123,11 +126,42 @@ static void print_usage(const char *prgname)
 	prgname, valid_types.c_str());
 }
 
+static uint8_t human_tbl[]={
+    ' ',
+    'K',
+    'M',
+    'G',
+    'T'
+};
+
+
+std::string double_to_human_str(double num, std::string units)
+{
+    double abs_num=num;
+    if (num<0.0) 
+        abs_num=-num;
+    int i=0;
+    int max_cnt=sizeof(human_tbl)/sizeof(human_tbl[0]);
+    double div =1.0;
+    double f=1000.0;
+    while ((abs_num > f ) && (i < max_cnt - 1)){
+        abs_num/=f;
+        div*=f;
+        i++;
+    }
+
+    char buf [100];
+    sprintf(buf,"%10.2f %c%s",num/div,human_tbl[i],units.c_str());
+    std::string res(buf);
+    return (res);
+}
+
 static int parse_type(char *type)
 {
 	std::string type_str(type);
 
-	test_creator_handler = test_types.get_creator_handler(type_str);
+	test_creator_handler = test_types.get_test_creator_handler(type_str);
+	test_result_creator_handler = test_types.get_test_result_creator_handler(type_str);
 	if(!test_creator_handler)
 	{
 		std::cout<<"Wrong test type!!!"<<std::endl;
@@ -311,15 +345,99 @@ void non_trivial_init()
 
 void *print_stats(__rte_unused void *dummy) 
 {
-	while(true)
+	// set affinity to lcore 2
+	cpu_set_t cpuset;
+	CPU_ZERO(&cpuset);
+	CPU_SET(2, &cpuset);
+	pthread_t current_thread = pthread_self();
+	pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+
+	rte_eth_stats stats[2];
+	u_int64_t last_obytes[2] = {0};
+	u_int64_t tx_rate[2] = {0};
+
+	while(test_is_running)
 	{
-		// print stats
+		for(u_int16_t portid=0; portid<2; portid++)
+		{
+			rte_eth_stats_get(portid,&stats[portid]);
+			tx_rate[portid] = (stats[portid].obytes - last_obytes[portid])*8;
+			last_obytes[portid] = stats[portid].obytes;
+		}
+		
+		
+		// clear screen
+		const char clr[] = { 27, '[', '2', 'J', '\0' };
+		const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
+			/* Clear screen and move to top left */
+		printf("%s%s", clr, topLeft);
+
+		printf(" %10s ","ports");
+		for(u_int16_t portid=0; portid<2; portid++)
+			printf("| %15d ",portid);
+		printf("\n");
+        printf(" -----------------------------------------------------------------------------------------\n");
+		std::string names[]={"opackets","obytes","ipackets","ibytes","ierrors","oerrors","Tx Bw"};
+		for (u_int16_t i=0; i<7; i++) 
+		{
+            printf(" %10s ",names[i].c_str());
+            int j=0;
+            for (j=0; j<2;j++) 
+			{
+                uint64_t cnt;
+                switch (i) {
+                case 0:
+                    cnt=stats[j].opackets;
+                    printf("| %15lu ",cnt);
+                    break;
+                case 1:
+                    cnt=stats[j].obytes;
+                    printf("| %15lu ",cnt);
+
+                    break;
+                case 2:
+                    cnt=stats[j].ipackets;
+                    printf("| %15lu ",cnt);
+
+                    break;
+                case 3:
+                    cnt=stats[j].ibytes;
+                    printf("| %15lu ",cnt);
+
+                    break;
+                case 4:
+                    cnt=stats[j].ierrors;
+                    printf("| %15lu ",cnt);
+
+                    break;
+                case 5:
+                    cnt=stats[j].oerrors;
+                    printf("| %15lu ",cnt);
+
+                    break;
+                case 6:
+                    printf("| %15s ",double_to_human_str((double)tx_rate[j],"bps").c_str());
+                    break;
+                default:
+                    cnt=0xffffff;
+                }
+            } /* ports */
+            printf( "\n");
+        }
+
 		sleep(1);
 	}
+
+	return NULL;
 }
 
 void print_final_result()
-{}
+{
+
+	for(auto lcore: rx_lcoreids)
+		hn_tests[lcore]->show_the_test_results();
+	hn_tests_result->show_test_results();
+}
 
 /**
  * @brief 
@@ -332,6 +450,8 @@ static void join_all_tests()
 	test_mutex.unlock();
 	while(nb_test_finished < tx_lcoreids.size()) {usleep(10000);}
 	
+	sleep(1); // wait 1 sec for packets to arrive
+
 	test_is_running = false;
 }
 
@@ -347,27 +467,28 @@ void rx_main_loop(u_int32_t lcore_id, u_int16_t queueu_id)
 			std::cerr<<"The test ended due to some technical failure"<<std::endl;
 			exit(-1);
 		}
+		rte_pktmbuf_free_bulk(pkts_burst, nb_rx);
 	}
 }
 
 void tx_main_loop(u_int32_t lcore_id, u_int32_t queue_id)
 {
 	rte_mbuf *pkts_burst[MAX_PKT_BURST];
-	uint64_t diff_tsc, cur_tsc, prev_tsc;
-	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
-	prev_tsc = 0;
+	// uint64_t diff_tsc, cur_tsc, prev_tsc;
+	// const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+	// prev_tsc = 0;
 	u_int16_t burst_offset = 0;
 	u_int32_t ret_burst_size = 0;
 
 	while(true)
 	{
-		cur_tsc = rte_rdtsc();
+		// cur_tsc = rte_rdtsc();
 
 		/*
 		 * TX burst queue drain
 		 */
-		diff_tsc = cur_tsc - prev_tsc;
-		if (unlikely(diff_tsc > drain_tsc)) 
+		// diff_tsc = cur_tsc - prev_tsc;
+		// if (unlikely(diff_tsc > drain_tsc)) 
 		{
 			if(!burst_offset)
 			{
@@ -385,7 +506,7 @@ void tx_main_loop(u_int32_t lcore_id, u_int32_t queue_id)
 			burst_offset += sent;
 			if(burst_offset >= ret_burst_size)
 				burst_offset = 0;
-			prev_tsc = cur_tsc;
+			// prev_tsc = cur_tsc;
 		}
 	}
 
@@ -435,11 +556,11 @@ static int main_loop(__rte_unused void *dummy)
 		return -1;
 		break;
 
-	case LCORE_T_RX:
+	case LCORE_T_TX:
 		tx_main_loop(lcore_id, queue_id);
 		break;
 
-	case LCORE_T_TX:
+	case LCORE_T_RX:
 		rx_main_loop(lcore_id, queue_id);
 		break;
 	}
@@ -500,11 +621,16 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 
+
 	// initializing test instances
+	std::vector<hn_test*> tmp_tests;
 	for(auto lcore : lcoreids)
 	{
 		hn_tests[lcore] = test_creator_handler(lcore);
+		tmp_tests.push_back(hn_tests[lcore]);
 	}
+	hn_tests_result = test_result_creator_handler(tmp_tests);
+
 
 	u_int32_t nb_mbuf = RTE_MAX((nb_ports * rx_lcoreids.size() * nb_rxd + nb_ports * rx_lcoreids.size() * MAX_PKT_BURST + nb_ports * rx_lcoreids.size() * nb_rxd + 
 									rx_lcoreids.size() * MEMPOOL_CACHE_SIZE), (unsigned)8192);
@@ -539,7 +665,7 @@ int main(int argc, char **argv)
 		
 		// set driver global configuration
 		std::shared_ptr<hn_driver> driver = std::shared_ptr<hn_driver>(driver_creator_handler());
-		hn_tests[0]->update_nic_global_config(driver.get(), portid, local_port_conf);
+		hn_tests[rx_lcoreids[0]]->update_nic_global_config(driver.get(), portid, local_port_conf);
 
 		int socket = rte_lcore_to_socket_id(portid);
 		if (socket == SOCKET_ID_ANY)
@@ -605,7 +731,7 @@ int main(int argc, char **argv)
 			rte_exit(EXIT_FAILURE, "rte_eth_promiscuous_enable: err=%s, port=%d\n", rte_strerror(-ret), portid);
 
 		// set driver after nic start configuration
-		hn_tests[0]->update_nic_after_start(driver.get(), portid);
+		hn_tests[rx_lcoreids[0]]->update_nic_after_start(driver.get(), portid);
 	}
 
 	check_all_ports_link_status();
