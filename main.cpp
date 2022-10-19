@@ -42,6 +42,7 @@
 #include <rte_string_fns.h>
 
 #include "hn_test_rss.h"
+#include "hn_test_rss_vxlan.h"
 #include "hn_test_fdir.h"
 #include "hn_driver_ixgbe.h"
 #include "hn_driver_mlx5.h"
@@ -108,13 +109,14 @@ static void register_test_types()
 	test_types.register_test("rss_ip", hn_test_rss::create_udp, hn_test_result_rss::create);
 	test_types.register_test("rss_udp", hn_test_rss::create_udp, hn_test_result_rss::create);
 	test_types.register_test("rss_tcp", hn_test_rss::create_tcp, hn_test_result_rss::create);
+	test_types.register_test("rss_vxlan", hn_test_rss_vxlan::create, hn_test_result_rss_vxlan::create);
 	test_types.register_test("fdir", hn_test_fdir::create, hn_test_result_fdir::create);
 }
 
 static void register_drivers()
 {
 	nic_drivers.register_driver("net_ixgbe", hn_driver_ixgbe::create);
-	nic_drivers.register_driver("net_mlx5", hn_driver_mlx5::create);
+	nic_drivers.register_driver("mlx5_pci", hn_driver_mlx5::create);
 }
 
 
@@ -306,7 +308,7 @@ static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
         if (pktmbuf_pool[portid][socketid] == NULL) 
 		{
 			snprintf(buf, sizeof(buf), "mbuf_pool_%d:%d", portid, socketid);
-			pktmbuf_pool[portid][socketid] = rte_pktmbuf_pool_create(buf, nb_mbuf, MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, socketid);
+			pktmbuf_pool[portid][socketid] = rte_pktmbuf_pool_create(buf, nb_mbuf, MEMPOOL_CACHE_SIZE, 0, JUMBO_FRAME_MAX_SIZE, socketid);
 			if (pktmbuf_pool[portid][socketid] == NULL)
 				rte_exit(EXIT_FAILURE, "Cannot init mbuf pool on socket %d\n", socketid);
 			else
@@ -321,7 +323,7 @@ static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 	    if (pktmbuf_tx_pool[portid][lcore_id] == NULL) 
 		{
 			snprintf(buf, sizeof(buf), "mbuf_tx_pool_%d:%d", portid, lcore_id);
-			pktmbuf_tx_pool[portid][lcore_id] = rte_pktmbuf_pool_create(buf, nb_tx_mbuf, MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, socketid);
+			pktmbuf_tx_pool[portid][lcore_id] = rte_pktmbuf_pool_create(buf, nb_tx_mbuf, MEMPOOL_CACHE_SIZE, 0, JUMBO_FRAME_MAX_SIZE, socketid);
 			if (pktmbuf_tx_pool[portid][lcore_id] == NULL)
 				rte_exit(EXIT_FAILURE, "Cannot init tx mbuf pool on lcore_id %d\n", lcore_id);
 			else
@@ -335,7 +337,7 @@ static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 void non_trivial_init()
 {	
 	port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_NONE;
-	port_conf.rxmode.mtu = JUMBO_FRAME_MAX_SIZE - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN;
+	port_conf.rxmode.mtu = RTE_MBUF_DEFAULT_BUF_SIZE - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN;
 	port_conf.rxmode.split_hdr_size = 0;
 	port_conf.rxmode.offloads = RTE_ETH_RX_OFFLOAD_CHECKSUM;
 	port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
@@ -355,6 +357,8 @@ void *print_stats(__rte_unused void *dummy)
 	rte_eth_stats stats[2];
 	u_int64_t last_obytes[2] = {0};
 	u_int64_t tx_rate[2] = {0};
+	rte_eth_xstat *xstats;
+    rte_eth_xstat_name *xstats_names;
 
 	while(test_is_running)
 	{
@@ -425,6 +429,53 @@ void *print_stats(__rte_unused void *dummy)
             printf( "\n");
         }
 
+		printf("------------------------------ xstats --------------------------------------\n");
+
+        static const char *stats_border = "_______";
+
+		for(u_int16_t portid=0; portid<rte_eth_dev_count_avail(); portid++)
+		{
+			int len = rte_eth_xstats_get(portid, NULL, 0);
+			if (len < 0)
+				rte_exit(EXIT_FAILURE, "rte_eth_xstats_get(%u) failed: %d", portid, len);
+
+			xstats = (rte_eth_xstat *)calloc(len, sizeof(rte_eth_xstat));
+			if (xstats == NULL)
+				rte_exit(EXIT_FAILURE, "Failed to calloc memory for xstats");
+
+			int ret = rte_eth_xstats_get(portid, xstats, len);
+			if (ret < 0 || ret > len) 
+			{
+				free(xstats);
+				rte_exit(EXIT_FAILURE, "rte_eth_xstats_get(%u) len%i failed: %d", portid, len, ret);
+			}
+
+			xstats_names = (rte_eth_xstat_name *)calloc(len, sizeof(rte_eth_xstat_name));
+			if (xstats_names == NULL) 
+			{
+				free(xstats);
+				rte_exit(EXIT_FAILURE, "Failed to calloc memory for xstats_names");
+			}
+
+			ret = rte_eth_xstats_get_names(portid, xstats_names, len);
+			if (ret < 0 || ret > len) 
+			{
+				free(xstats);
+				free(xstats_names);
+				rte_exit(EXIT_FAILURE, "rte_eth_xstats_get_names(%u) len%i failed: %d", portid, len, ret);
+			}
+
+			for (int i = 0; i < len; i++) 
+			{
+				if (xstats[i].value > 0)
+					printf("Port %u: %s %s:\t\t%" PRIu64 "\n", portid, stats_border, xstats_names[i].name, xstats[i].value);
+			}
+
+			free(xstats);
+			free(xstats_names);
+			fflush(stdout);
+		}
+
 		sleep(1);
 	}
 
@@ -459,10 +510,12 @@ void rx_main_loop(u_int32_t lcore_id, u_int16_t queueu_id)
 {
 	rte_mbuf *pkts_burst[MAX_PKT_BURST];
 
+	hn_tests[lcore_id]->before_receiving(0);
+
 	while (test_is_running) 
 	{
-		u_int16_t nb_rx = rte_eth_rx_burst(1/* portid */, queueu_id, pkts_burst, MAX_PKT_BURST);
-		if(hn_tests[lcore_id]->process_rx_burst_pkts(pkts_burst, nb_rx) < 0)
+		u_int16_t nb_rx = rte_eth_rx_burst(0/* portid */, queueu_id, pkts_burst, MAX_PKT_BURST);
+		if(hn_tests[lcore_id]->process_rx_burst_pkts(pkts_burst, nb_rx, queueu_id) < 0)
 		{
 			std::cerr<<"The test ended due to some technical failure"<<std::endl;
 			exit(-1);
@@ -479,6 +532,8 @@ void tx_main_loop(u_int32_t lcore_id, u_int32_t queue_id)
 	// prev_tsc = 0;
 	u_int16_t burst_offset = 0;
 	u_int32_t ret_burst_size = 0;
+
+	hn_tests[lcore_id]->before_sending(0);
 
 	while(true)
 	{
@@ -590,11 +645,11 @@ int main(int argc, char **argv)
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No ports found!\n");
 
-	if(nb_ports != 2)
-	{
-		std::cerr<<"Number of ports should be equal to 2"<<std::endl;
-		exit(-1);
-	}
+	// if(nb_ports != 2)
+	// {
+	// 	std::cerr<<"Number of ports should be equal to 2"<<std::endl;
+	// 	exit(-1);
+	// }
 
 	for (u_int32_t lcore_id = 0, i=0; lcore_id < RTE_MAX_LCORE; lcore_id++) 
 	{
@@ -602,10 +657,10 @@ int main(int argc, char **argv)
 			continue;
 
 		lcoreids.push_back(lcore_id);
-		if(i%2)
-			rx_lcoreids.push_back(lcore_id);
-		else
+		// if(i%2)
 			tx_lcoreids.push_back(lcore_id);
+		// else
+			rx_lcoreids.push_back(lcore_id);
 		i++;
 	}
 
@@ -731,7 +786,7 @@ int main(int argc, char **argv)
 			rte_exit(EXIT_FAILURE, "rte_eth_promiscuous_enable: err=%s, port=%d\n", rte_strerror(-ret), portid);
 
 		// set driver after nic start configuration
-		hn_tests[rx_lcoreids[0]]->update_nic_after_start(driver.get(), portid);
+		hn_tests[rx_lcoreids[0]]->update_nic_after_start(driver.get(), portid, rx_lcoreids.size());
 	}
 
 	check_all_ports_link_status();

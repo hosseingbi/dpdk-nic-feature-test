@@ -4,16 +4,10 @@
     "cmake.debugConfig": {
         "args": [
             "-c",
-            "0xff00",
-            "-n",
-            "4",
-            "-a",
-            "05:00.0",
-            "-a",
-            "05:00.1",
+            "0xf0",
             "--",
             "--type",
-            "rss_udp"
+            "rss_vxlan"
         ]
     },
     "files.associations": {

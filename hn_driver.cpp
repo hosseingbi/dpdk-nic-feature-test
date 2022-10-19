@@ -1,10 +1,108 @@
 #include "hn_driver.h"
 
+enum layer_name {
+	L2,
+	L3,
+	L4,
+	TUNNEL,
+	L2_INNER,
+	L3_INNER,
+	L4_INNER,
+	END
+};
+
 void hn_driver::set_rss_config(__rte_unused u_int16_t port_id, rte_eth_conf &port_conf) 
 {
     port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
     port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
-    port_conf.rx_adv_conf.rss_conf.rss_hf = ETH_RSS_NONFRAG_IPV4_TCP | ETH_RSS_NONFRAG_IPV4_UDP | ETH_RSS_NONFRAG_IPV6_TCP | ETH_RSS_NONFRAG_IPV6_UDP;
+    port_conf.rx_adv_conf.rss_conf.rss_hf = RTE_ETH_RSS_NONFRAG_IPV4_TCP | RTE_ETH_RSS_NONFRAG_IPV4_UDP | RTE_ETH_RSS_NONFRAG_IPV6_TCP | RTE_ETH_RSS_NONFRAG_IPV6_UDP;
+}
+
+void hn_driver::set_rss_vxlan_inner_config(__rte_unused u_int16_t port_id, rte_eth_conf &port_conf)
+{
+    port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+    port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
+    port_conf.rx_adv_conf.rss_conf.rss_hf = RTE_ETH_RSS_NONFRAG_IPV4_TCP | RTE_ETH_RSS_NONFRAG_IPV4_UDP;
+}
+
+void hn_driver::set_rss_vxlan_rte_flow_config(uint16_t port_id, u_int32_t nb_queues)
+{
+    u_int16_t queues[RTE_MAX_LCORE];
+    for(u_int32_t i=0; i<nb_queues; i++)
+        queues[i] = i;
+    struct rte_flow *flow;
+	struct rte_flow_error error;
+	struct rte_flow_attr attr;
+
+    memset(&attr, 0, sizeof(rte_flow_attr));
+    attr.group = 0;
+    attr.ingress = 1;
+    attr.priority = 1;
+
+    rte_flow_item pattern[8];
+    for(u_int32_t i=0; i<=END; i++)
+    {
+        pattern[i].type = RTE_FLOW_ITEM_TYPE_VOID;
+        pattern[i].spec = NULL;
+        pattern[i].mask = NULL;
+        pattern[i].last = NULL;
+    }
+
+	// uint8_t symmetric_rss_key[] = {
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// 	0x6D, 0x5A, 0x6D, 0x5A,
+	// };
+
+    uint8_t xena_hash_key[] = 
+    {
+        0x6D, 0x5A, 0x56, 0xDA, 0x25, 0x5B, 0x0E, 0xC2,
+        0x41, 0x67, 0x25, 0x3D, 0x43, 0xA3, 0x8F, 0xB0,
+        0xD0, 0xCA, 0x2B, 0xCB, 0xAE, 0x7B, 0x30, 0xB4,
+        0x77, 0xCB, 0x2D, 0xA3, 0x80, 0x30, 0xF2, 0x0C,
+        0x6A, 0x42, 0xB7, 0x3B, 0xBE, 0xAC, 0x01, 0xFA
+    }; 
+
+
+	struct rte_flow_action_rss rss;
+    memset(&rss, 0, sizeof(rte_flow_action_rss));
+    rss.level = 2;
+    rss.queue = queues;
+    rss.queue_num = nb_queues;
+    rss.types = RTE_ETH_RSS_IP|RTE_ETH_RSS_NONFRAG_IPV4_UDP|RTE_ETH_RSS_NONFRAG_IPV4_TCP;
+    rss.key = xena_hash_key;
+    rss.key_len = sizeof(xena_hash_key);
+
+
+	struct rte_flow_action actions[2];
+    memset(&actions, 0, 2*sizeof(rte_flow_action));
+    actions[0].type = RTE_FLOW_ACTION_TYPE_RSS;
+    actions[0].conf = &rss;
+    actions[1].type = RTE_FLOW_ACTION_TYPE_END;
+
+
+
+	pattern[L2].type = RTE_FLOW_ITEM_TYPE_ETH;
+	pattern[L3].type = RTE_FLOW_ITEM_TYPE_IPV4;
+	pattern[L4].type = RTE_FLOW_ITEM_TYPE_UDP;
+	pattern[TUNNEL].type = RTE_FLOW_ITEM_TYPE_VXLAN;
+    pattern[L2_INNER].type = RTE_FLOW_ITEM_TYPE_ETH;
+	pattern[L3_INNER].type = RTE_FLOW_ITEM_TYPE_IPV4;
+	pattern[L4_INNER].type = RTE_FLOW_ITEM_TYPE_TCP;
+    pattern[END].type = RTE_FLOW_ITEM_TYPE_END;
+
+	flow = rte_flow_create(port_id, &attr, pattern, actions, &error);
+	if (!flow) 
+    {
+		printf("can't create UL symmetric RSS flow on inner ip. %s\n", error.message);
+	}
 }
 
 void hn_driver::set_fdir_global_config(__rte_unused u_int16_t port_id, __rte_unused  rte_eth_conf &port_conf) 

@@ -76,7 +76,7 @@ int hn_test_fdir::get_burst_pkts(rte_mbuf **m, u_int32_t max_burst_size, u_int32
     return 1;
 }
 
-int hn_test_fdir::process_rx_burst_pkts(rte_mbuf **m, u_int32_t size)
+int hn_test_fdir::process_rx_burst_pkts(rte_mbuf **m, u_int32_t size, __rte_unused u_int32_t queue_id)
 {
     if(lcore_id != fdir_lcore_id)
         return 0;
@@ -157,7 +157,7 @@ void hn_test_fdir::update_steps()
     ip_tos = ip_tos + ip_tos_step;
 }
 
-void hn_test_fdir::update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id)
+void hn_test_fdir::update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id, __rte_unused u_int32_t nb_queues)
 {
     nic_driver->set_fdir_filter(port_id);
 }

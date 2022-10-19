@@ -74,7 +74,7 @@ public:
      *      -1 means the test should be ended with some technical failure
      *      0 means success
      */
-    virtual int process_rx_burst_pkts(rte_mbuf **m, u_int32_t size) = 0;
+    virtual int process_rx_burst_pkts(rte_mbuf **m, u_int32_t size, u_int32_t queue_id) = 0;
 
     /**
      * @brief 
@@ -85,7 +85,10 @@ public:
 
     virtual void update_nic_global_config(hn_driver *nic_driver, u_int16_t port_id, rte_eth_conf &port_conf) = 0;
 
-    virtual void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id) = 0;
+    virtual void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id, u_int32_t nb_queues) = 0;
+
+    virtual void before_sending(u_int16_t port_id) {}
+    virtual void before_receiving(u_int16_t port_id) {}
 
     u_int32_t get_lcore_id() {return lcore_id;}
 };

@@ -82,7 +82,7 @@ public:
      *      -1 means the test should be ended with some technical failure
      *      0 means success
      */
-    int process_rx_burst_pkts(rte_mbuf **m, u_int32_t size) override;
+    int process_rx_burst_pkts(rte_mbuf **m, u_int32_t size, u_int32_t queue_id) override;
 
     /**
      * @brief 
@@ -93,7 +93,7 @@ public:
 
     void update_nic_global_config(__rte_unused hn_driver *nic_driver, __rte_unused u_int16_t port_id, __rte_unused rte_eth_conf &port_conf) override {}
 
-    void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id) override;
+    void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id, u_int32_t nb_queues) override;
 
     u_int32_t get_lcore_id() {return lcore_id;}
 
