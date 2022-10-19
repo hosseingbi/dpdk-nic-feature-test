@@ -107,7 +107,7 @@ int hn_test_rss::get_burst_pkts(rte_mbuf **m, u_int32_t max_burst_size, u_int32_
     return 1;
 }
 
-int hn_test_rss::process_rx_burst_pkts(rte_mbuf **m, u_int32_t size) 
+int hn_test_rss::process_rx_burst_pkts(rte_mbuf **m, u_int32_t size, __rte_unused u_int32_t queue_id) 
 {
     for(u_int32_t i=0; i< size; i++)
     {
