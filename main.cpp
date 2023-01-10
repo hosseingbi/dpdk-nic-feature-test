@@ -43,6 +43,7 @@
 
 #include "hn_test_rss.h"
 #include "hn_test_fdir.h"
+#include "hn_test_dhcp.h"
 #include "hn_driver_ixgbe.h"
 #include "hn_driver_mlx5.h"
 
@@ -102,6 +103,7 @@ static hn_test_extend test_types;
 static std::function<hn_test*(u_int32_t)> test_creator_handler;
 static std::function<hn_test_result*(std::vector<hn_test *>)> test_result_creator_handler;
 static hn_driver_extend nic_drivers;
+static bool is_single_port = 0;
 
 static void register_test_types()
 {
@@ -109,12 +111,13 @@ static void register_test_types()
 	test_types.register_test("rss_udp", hn_test_rss::create_udp, hn_test_result_rss::create);
 	test_types.register_test("rss_tcp", hn_test_rss::create_tcp, hn_test_result_rss::create);
 	test_types.register_test("fdir", hn_test_fdir::create, hn_test_result_fdir::create);
+	test_types.register_test("dhcp", hn_test_dhcp::create, hn_test_result_dhcp::create);
 }
 
 static void register_drivers()
 {
 	nic_drivers.register_driver("net_ixgbe", hn_driver_ixgbe::create);
-	nic_drivers.register_driver("net_mlx5", hn_driver_mlx5::create);
+	nic_drivers.register_driver("mlx5_pci", hn_driver_mlx5::create);
 }
 
 
@@ -186,7 +189,8 @@ static int parse_args(int argc, char **argv)
 	int option_index;
 	char *prgname = argv[0];
 	static struct option lgopts[] = {
-		{"type", required_argument, NULL, 0}
+		{"type", required_argument, NULL, 0},
+		{"single-port", optional_argument, NULL, 0}
 	};
 
 	argvopt = argv;
@@ -205,6 +209,10 @@ static int parse_args(int argc, char **argv)
 				int ret = parse_type(optarg);
 				if(ret < 0)
 					return -1;
+			}
+			else if (!strncmp(lgopts[option_index].name, "single-port", 4)) 
+			{
+				is_single_port = true;
 			}
 
 			break;
@@ -335,7 +343,7 @@ static int init_mem(uint16_t portid, u_int32_t nb_mbuf, u_int32_t nb_tx_mbuf)
 void non_trivial_init()
 {	
 	port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_NONE;
-	port_conf.rxmode.mtu = JUMBO_FRAME_MAX_SIZE - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN;
+	port_conf.rxmode.mtu = RTE_MBUF_DEFAULT_DATAROOM - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN ;
 	port_conf.rxmode.split_hdr_size = 0;
 	port_conf.rxmode.offloads = RTE_ETH_RX_OFFLOAD_CHECKSUM;
 	port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
@@ -513,20 +521,87 @@ void tx_main_loop(u_int32_t lcore_id, u_int32_t queue_id)
 	join_all_tests();
 }
 
+void rxtx_main_loop(u_int32_t lcore_id, u_int16_t queue_id)
+{
+	rte_mbuf *pkts_burst[MAX_PKT_BURST];
+	uint64_t diff_tsc, cur_tsc, prev_tsc;
+	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+	prev_tsc = 0;
+	u_int16_t burst_offset = 0;
+	u_int32_t ret_burst_size = 0;
+
+	while(true)
+	{
+		cur_tsc = rte_rdtsc();
+
+		/*
+		 * TX burst queue drain
+		 */
+		diff_tsc = cur_tsc - prev_tsc;
+		if (unlikely(diff_tsc > drain_tsc)) 
+		{
+			if(!burst_offset)
+			{
+				int ret = hn_tests[lcore_id]->get_burst_pkts(pkts_burst, MAX_PKT_BURST, ret_burst_size, pktmbuf_tx_pool[0][lcore_id]);
+				if(ret == -1)
+				{
+					std::cerr<<"Some technical errors occured during sending the pkts!!!"<<std::endl;
+					exit(-1);
+				}
+				else if(ret == 0)
+					break; // end of the test
+			}
+
+			u_int16_t sent = rte_eth_tx_burst(0/*port id*/, queue_id, &pkts_burst[burst_offset], ret_burst_size - burst_offset);
+			burst_offset += sent;
+			if(burst_offset >= ret_burst_size)
+				burst_offset = 0;
+			prev_tsc = cur_tsc;
+		}
+
+		u_int16_t nb_rx = rte_eth_rx_burst(0/* portid */, queue_id, pkts_burst, MAX_PKT_BURST);
+		if(hn_tests[lcore_id]->process_rx_burst_pkts(pkts_burst, nb_rx) < 0)
+		{
+			std::cerr<<"The test ended due to some technical failure"<<std::endl;
+			exit(-1);
+		}
+		rte_pktmbuf_free_bulk(pkts_burst, nb_rx);
+
+	}
+
+	join_all_tests();
+}
+
 static int main_loop(__rte_unused void *dummy)
 {
 	u_int32_t lcore_id = rte_lcore_id();
-	enum LcoreType{LCORE_T_NONE = 0, LCORE_T_RX = 1, LCORE_T_TX = 2} lcore_type;
+	enum LcoreType{LCORE_T_NONE = 0, LCORE_T_RX = 1, LCORE_T_TX = 2, LCORE_T_RXTX = 3} lcore_type;
 	lcore_type = LCORE_T_NONE;
 	u_int32_t queue_id = 0;
 
-	for(u_int32_t i=0; i<rx_lcoreids.size(); i++)
+	if(is_single_port)
 	{
-		if(rx_lcoreids[i] == lcore_id)
+		for(u_int32_t i=0; i<lcoreids.size(); i++)
 		{
-			lcore_type = LCORE_T_RX;
-			queue_id = i;
-			break;
+			if(lcoreids[i] == lcore_id)
+			{
+				lcore_type = LCORE_T_RXTX;
+				queue_id = i;
+				break;
+			}
+		}
+	}
+
+	if(lcore_type == LCORE_T_NONE)
+	{
+		for(u_int32_t i=0; i<rx_lcoreids.size(); i++)
+		{
+			if(rx_lcoreids[i] == lcore_id)
+			{
+				lcore_type = LCORE_T_RX;
+				queue_id = i;
+				break;
+			}
 		}
 	}
 
@@ -563,6 +638,9 @@ static int main_loop(__rte_unused void *dummy)
 	case LCORE_T_RX:
 		rx_main_loop(lcore_id, queue_id);
 		break;
+	case LCORE_T_RXTX:
+		rxtx_main_loop(lcore_id, queue_id);
+		break;
 	}
 
 	return 0;
@@ -590,7 +668,7 @@ int main(int argc, char **argv)
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No ports found!\n");
 
-	if(nb_ports != 2)
+	if(!(nb_ports == 1 && is_single_port) && nb_ports != 2)
 	{
 		std::cerr<<"Number of ports should be equal to 2"<<std::endl;
 		exit(-1);
@@ -602,7 +680,12 @@ int main(int argc, char **argv)
 			continue;
 
 		lcoreids.push_back(lcore_id);
-		if(i%2)
+		if(is_single_port)
+		{
+			rx_lcoreids.push_back(lcore_id);
+			tx_lcoreids.push_back(lcore_id);
+		}
+		else if(i%2)
 			rx_lcoreids.push_back(lcore_id);
 		else
 			tx_lcoreids.push_back(lcore_id);
@@ -615,7 +698,7 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 
-	if(lcoreids.size() % 2)
+	if(lcoreids.size() % 2 && !is_single_port)
 	{
 		std::cerr<<"The number of Lcores should be even"<<std::endl;
 		exit(-1);

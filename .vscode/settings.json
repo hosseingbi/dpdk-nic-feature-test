@@ -4,16 +4,15 @@
     "cmake.debugConfig": {
         "args": [
             "-c",
-            "0xff00",
+            "0x10",
             "-n",
             "4",
             "-a",
-            "05:00.0",
-            "-a",
-            "05:00.1",
+            "1b:00.0",
             "--",
+            "--single-port",
             "--type",
-            "rss_udp"
+            "dhcp"
         ]
     },
     "files.associations": {
@@ -64,6 +63,10 @@
         "chrono": "cpp",
         "ctime": "cpp",
         "mutex": "cpp",
-        "ratio": "cpp"
+        "ratio": "cpp",
+        "condition_variable": "cpp",
+        "cstring": "cpp",
+        "map": "cpp",
+        "thread": "cpp"
     }
 }
