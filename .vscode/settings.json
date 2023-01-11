@@ -67,6 +67,7 @@
         "condition_variable": "cpp",
         "cstring": "cpp",
         "map": "cpp",
-        "thread": "cpp"
+        "thread": "cpp",
+        "list": "cpp"
     }
 }

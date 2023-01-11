@@ -4,7 +4,7 @@ project(mlx5-test VERSION 0.1.0)
 include(CTest)
 enable_testing()
 
-add_executable(mlx5-test main.cpp hn_test_rss.cpp hn_test_fdir.cpp hn_driver.cpp hn_driver_mlx5.cpp hn_driver_ixgbe.cpp hn_test_dhcp.cpp)
+add_executable(mlx5-test main.cpp hn_test_rss.cpp hn_test_fdir.cpp hn_driver.cpp hn_driver_mlx5.cpp hn_driver_ixgbe.cpp hn_test_dhcp.cpp dhcp_client.cpp dhcp_client_session.cpp)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
