@@ -10,7 +10,7 @@ static int port_rss_reta_update(uint16_t portid, u_int32_t nb_queues)
 {
     int ret;
     int reta;
-    xena_reta_conf reta_conf; 
+    vxlan_reta_conf reta_conf; 
     u_int8_t idx, shift;
     u_int16_t core_num;
     u_int32_t c;
@@ -40,7 +40,7 @@ static int port_rss_reta_update(uint16_t portid, u_int32_t nb_queues)
     return ret;
 }
 
-static int port_rss_reta_query(u_int16_t pid, xena_reta_conf_ptr reta_conf)
+static int port_rss_reta_query(u_int16_t pid, vxlan_reta_conf_ptr reta_conf)
 {
   int ret;
   int reta, idx, shift;
@@ -57,7 +57,7 @@ static int port_rss_reta_query(u_int16_t pid, xena_reta_conf_ptr reta_conf)
   return ret;
 }
 
-static int port_rss_reta_index_to_queue(__rte_unused u_int16_t pid, u_int16_t i, xena_reta_conf_ptr reta_conf)
+static int port_rss_reta_index_to_queue(__rte_unused u_int16_t pid, u_int16_t i, vxlan_reta_conf_ptr reta_conf)
 {
   u_int8_t idx, shift;
   idx   = i / RTE_ETH_RETA_GROUP_SIZE;
@@ -98,7 +98,7 @@ int hn_test_rss_vxlan::process_rx_burst_pkts(__rte_unused rte_mbuf **m , u_int32
                     if(inner_ip_hdr ->next_proto_id == 0x6) // tcp
                     {
                         u_int16_t rss_index = m[i]->hash.rss & 511;
-                        int tmp_queue_id = port_rss_reta_index_to_queue(0, rss_index, (xena_reta_conf_ptr)&retaconf);
+                        int tmp_queue_id = port_rss_reta_index_to_queue(0, rss_index, (vxlan_reta_conf_ptr)&retaconf);
                         if(tmp_queue_id != queue_id)
                         {
                             printf("shapalagh\n");
@@ -123,9 +123,9 @@ void hn_test_rss_vxlan::update_nic_after_start(hn_driver *nic_driver, u_int16_t 
     // apply reta configuration
     port_rss_reta_update(port_id, nb_queues);
 
-    xena_reta_conf  tmp_reta_conf;
-    memset(&tmp_reta_conf, 0, sizeof(xena_reta_conf));
-    port_rss_reta_query(port_id, (xena_reta_conf_ptr)&tmp_reta_conf);
+    vxlan_reta_conf  tmp_reta_conf;
+    memset(&tmp_reta_conf, 0, sizeof(vxlan_reta_conf));
+    port_rss_reta_query(port_id, (vxlan_reta_conf_ptr)&tmp_reta_conf);
 
 }
 
@@ -135,8 +135,8 @@ void hn_test_rss_vxlan::show_the_test_results()
 
 void hn_test_rss_vxlan::before_receiving(u_int16_t port_id)
 {
-    memset(&retaconf, 0, sizeof(xena_reta_conf));
-    port_rss_reta_query(port_id, (xena_reta_conf_ptr)&retaconf);
+    memset(&retaconf, 0, sizeof(vxlan_reta_conf));
+    port_rss_reta_query(port_id, (vxlan_reta_conf_ptr)&retaconf);
 }
 
 void hn_test_result_rss_vxlan::show_test_results()

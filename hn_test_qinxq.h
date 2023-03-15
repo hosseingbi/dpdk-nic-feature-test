@@ -1,5 +1,5 @@
-#ifndef HN_TEST_RSS_VXLAN_H
-#define HN_TEST_RSS_VXLAN_H
+#ifndef HN_TEST_QINXQ_H
+#define HN_TEST_QINXQ_H
 
 #include <iostream>
 #include <memory>
@@ -10,19 +10,19 @@
 
 #define XENA_RETA_CONF_SIZE 8
 
-typedef struct rte_eth_rss_reta_entry64 vxlan_reta_conf[XENA_RETA_CONF_SIZE];
-typedef struct rte_eth_rss_reta_entry64 *vxlan_reta_conf_ptr;
+typedef struct rte_eth_rss_reta_entry64 xena_reta_conf[XENA_RETA_CONF_SIZE];
+typedef struct rte_eth_rss_reta_entry64 *xena_reta_conf_ptr;
 
 
 
-class hn_test_rss_vxlan: public hn_test
+class hn_test_qinxq: public hn_test
 {
 private:
-    vxlan_reta_conf retaconf;
+    xena_reta_conf retaconf;
 
 public:
-    hn_test_rss_vxlan(u_int32_t lcore_id);
-    ~hn_test_rss_vxlan();
+    hn_test_qinxq(u_int32_t lcore_id);
+    ~hn_test_qinxq();
 
 
     /**
@@ -31,7 +31,7 @@ public:
      * @param lcore 
      * @return hn_test* 
      */
-    static hn_test* create(u_int32_t lcore) {return new hn_test_rss_vxlan(lcore); }
+    static hn_test* create(u_int32_t lcore) {return new hn_test_qinxq(lcore); }
 
     /**
      * @brief Get a burst of mbufs from the given mempool and prepared them for the test.
@@ -81,17 +81,17 @@ public:
 };
 
 
-class hn_test_result_rss_vxlan: public hn_test_result
+class hn_test_result_qinxq: public hn_test_result
 {
 public:
-    hn_test_result_rss_vxlan(std::vector<hn_test *> tests)
+    hn_test_result_qinxq(std::vector<hn_test *> tests)
         :hn_test_result(tests) {}
 
 
-    static hn_test_result_rss_vxlan* create(std::vector<hn_test *> tests) { return new hn_test_result_rss_vxlan(tests);}
+    static hn_test_result_qinxq* create(std::vector<hn_test *> tests) { return new hn_test_result_qinxq(tests);}
 
     void show_test_results() override;
     
 };
 
-#endif // HN_TEST_RSS_VXLAN_H
+#endif

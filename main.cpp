@@ -44,8 +44,12 @@
 #include "hn_test_rss.h"
 #include "hn_test_rss_vxlan.h"
 #include "hn_test_fdir.h"
+#include "hn_test_qinxq.h"
+#include "hn_test_vlan_send.h"
 #include "hn_driver_ixgbe.h"
 #include "hn_driver_mlx5.h"
+#include "hn_driver_ice.h"
+#include "hn_driver_vmxnet3.h"
 
 #define NB_SOCKETS        8
 #define MEMPOOL_CACHE_SIZE 256
@@ -111,12 +115,16 @@ static void register_test_types()
 	test_types.register_test("rss_tcp", hn_test_rss::create_tcp, hn_test_result_rss::create);
 	test_types.register_test("rss_vxlan", hn_test_rss_vxlan::create, hn_test_result_rss_vxlan::create);
 	test_types.register_test("fdir", hn_test_fdir::create, hn_test_result_fdir::create);
+	test_types.register_test("qinxq", hn_test_qinxq::create, hn_test_result_qinxq::create);
+	test_types.register_test("vlan_send", hn_test_vlan_send::create, hn_test_result_vlan_send::create);
 }
 
 static void register_drivers()
 {
 	nic_drivers.register_driver("net_ixgbe", hn_driver_ixgbe::create);
 	nic_drivers.register_driver("mlx5_pci", hn_driver_mlx5::create);
+	nic_drivers.register_driver("net_ice", hn_driver_ice::create);
+	nic_drivers.register_driver("net_vmxnet3", hn_driver_vmxnet3::create);
 }
 
 

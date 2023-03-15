@@ -5,9 +5,11 @@
         "args": [
             "-c",
             "0xf0",
+            "-a",
+            "13:00.0",
             "--",
             "--type",
-            "rss_vxlan"
+            "test_vlan_send"
         ]
     },
     "files.associations": {

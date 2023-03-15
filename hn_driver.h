@@ -20,6 +20,8 @@ public:
     virtual void set_rss_config(u_int16_t port_id, rte_eth_conf &port_conf);
     virtual void set_rss_vxlan_inner_config(u_int16_t port_id, rte_eth_conf &port_conf);
     virtual void set_rss_vxlan_rte_flow_config(uint16_t port_id, u_int32_t nb_queues);
+    virtual void set_rss_qinxq_config(u_int16_t port_id, rte_eth_conf &port_conf);
+    virtual void set_rss_qinxq_rte_flow_config(uint16_t port_id, u_int32_t nb_queues, u_int32_t nb_vlans);
     virtual void set_fdir_global_config(u_int16_t port_id, rte_eth_conf &port_conf);
     virtual void set_fdir_filter(u_int16_t port_id);
 
