@@ -44,8 +44,10 @@
 #include "hn_test_rss.h"
 #include "hn_test_fdir.h"
 #include "hn_test_dhcp.h"
+#include "hn_test_fastgen.h"
 #include "hn_driver_ixgbe.h"
 #include "hn_driver_mlx5.h"
+#include "hn_driver_ice.h"
 
 #define NB_SOCKETS        8
 #define MEMPOOL_CACHE_SIZE 256
@@ -112,12 +114,15 @@ static void register_test_types()
 	test_types.register_test("rss_tcp", hn_test_rss::create_tcp, hn_test_result_rss::create);
 	test_types.register_test("fdir", hn_test_fdir::create, hn_test_result_fdir::create);
 	test_types.register_test("dhcp", hn_test_dhcp::create, hn_test_result_dhcp::create);
+	test_types.register_test("fastgen_udp", hn_test_fastgen::create_udp, hn_test_result_fastgen::create);
+	test_types.register_test("fastgen_tcp", hn_test_fastgen::create_tcp, hn_test_result_fastgen::create);
 }
 
 static void register_drivers()
 {
 	nic_drivers.register_driver("net_ixgbe", hn_driver_ixgbe::create);
 	nic_drivers.register_driver("mlx5_pci", hn_driver_mlx5::create);
+	nic_drivers.register_driver("net_ice", hn_driver_ice::create);
 }
 
 
@@ -716,6 +721,51 @@ void rxtx_main_loop5(u_int32_t lcore_id, u_int16_t queue_id)
 	join_all_tests();
 }
 
+void rxtx_main_loop6(u_int32_t lcore_id, u_int16_t queue_id)
+{
+	rte_mbuf *pkts_burst_rx[2][MAX_PKT_BURST];
+	rte_mbuf *pkts_burst_tx[2][MAX_PKT_BURST];
+	uint64_t diff_tsc, cur_tsc, prev_tsc;
+	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+	prev_tsc = 0;
+	u_int16_t burst_offset[2] = {0};
+	u_int32_t ret_burst_size[2] = {0};
+
+	while(true)
+	{
+		for(uint16_t pid = 0; pid < 2; pid++) {
+			if(burst_offset[pid] == 0)
+			{
+				int ret = hn_tests[lcore_id]->get_burst_pkts(pkts_burst_tx[pid], MAX_PKT_BURST, ret_burst_size[pid], pktmbuf_tx_pool[pid][lcore_id]);
+				if(ret == -1)
+				{
+					std::cerr<<"Some technical errors occured during sending the pkts!!!"<<std::endl;
+					exit(-1);
+				}
+				else if(ret == 0)
+					break; // end of the test
+			}
+
+			uint16_t sent = rte_eth_tx_burst(pid , queue_id, &pkts_burst_tx[pid][burst_offset[pid]], ret_burst_size[pid] - burst_offset[pid]);
+			burst_offset[pid] += sent;
+			if(burst_offset[pid] >= ret_burst_size[pid])
+				burst_offset[pid] = 0;
+			
+			u_int16_t nb_rx = rte_eth_rx_burst(pid, queue_id, pkts_burst_rx[pid], MAX_PKT_BURST);
+			if(hn_tests[lcore_id]->process_rx_burst_pkts(pkts_burst_rx[pid], nb_rx) < 0)
+			{
+				std::cerr<<"The test ended due to some technical failure"<<std::endl;
+				exit(-1);
+			}
+			rte_pktmbuf_free_bulk(pkts_burst_rx[pid], nb_rx);
+		}
+
+	}
+
+	join_all_tests();
+}
+
+
 static int main_loop(__rte_unused void *dummy)
 {
 	u_int32_t lcore_id = rte_lcore_id();
@@ -783,7 +833,7 @@ static int main_loop(__rte_unused void *dummy)
 		rx_main_loop(lcore_id, queue_id);
 		break;
 	case LCORE_T_RXTX:
-		rxtx_main_loop5(lcore_id, queue_id);
+		rxtx_main_loop6(lcore_id, queue_id);
 		break;
 	}
 

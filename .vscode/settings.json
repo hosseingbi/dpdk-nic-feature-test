@@ -4,17 +4,17 @@
     "cmake.debugConfig": {
         "args": [
             "-c",
-            "0xff00",
+            "0xffff00",
             "-n",
             "4",
             "-a",
-            "31:00.0",
+            "17:00.0",
             "-a",
-            "b1:00.0",
+            "98:00.0",
             "--",
             "--single-port",
             "--type",
-            "dhcp"
+            "fastgen_udp"
         ]
     },
     "files.associations": {
