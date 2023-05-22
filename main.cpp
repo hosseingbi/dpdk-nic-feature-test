@@ -80,7 +80,7 @@
 #define JUMBO_FRAME_MAX_SIZE	0x2600
 #define RTE_TEST_RX_DESC_DEFAULT 1024
 #define RTE_TEST_TX_DESC_DEFAULT 1024
-#define MAX_PKT_BURST 32
+#define MAX_PKT_BURST 64
 #define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
 
 static rte_mempool *pktmbuf_pool[RTE_MAX_ETHPORTS][NB_SOCKETS];
@@ -362,7 +362,11 @@ void *print_stats(__rte_unused void *dummy)
 
 	rte_eth_stats stats[2];
 	u_int64_t last_obytes[2] = {0};
+	u_int64_t last_ipackets[2] = {0};
+	u_int64_t last_opackets[2] = {0};
 	u_int64_t tx_rate[2] = {0};
+	u_int64_t pps_rx_rate[2] = {0};
+	u_int64_t pps_tx_rate[2] = {0};
 
 	while(test_is_running)
 	{
@@ -371,6 +375,12 @@ void *print_stats(__rte_unused void *dummy)
 			rte_eth_stats_get(portid,&stats[portid]);
 			tx_rate[portid] = (stats[portid].obytes - last_obytes[portid])*8;
 			last_obytes[portid] = stats[portid].obytes;
+
+			pps_rx_rate[portid] = stats[portid].ipackets - last_ipackets[portid];
+			last_ipackets[portid] = stats[portid].ipackets;
+
+			pps_tx_rate[portid] = stats[portid].opackets - last_opackets[portid];
+			last_opackets[portid] = stats[portid].opackets;
 		}
 		
 		
@@ -385,8 +395,8 @@ void *print_stats(__rte_unused void *dummy)
 			printf("| %15d ",portid);
 		printf("\n");
         printf(" -----------------------------------------------------------------------------------------\n");
-		std::string names[]={"opackets","obytes","ipackets","ibytes","ierrors","oerrors","Tx Bw"};
-		for (u_int16_t i=0; i<7; i++) 
+		std::string names[]={"opackets","obytes","ipackets","ibytes","ierrors","oerrors", "Tx PPS", "Rx PPS", "Tx Bw"};
+		for (u_int16_t i=0; i<9; i++) 
 		{
             printf(" %10s ",names[i].c_str());
             int j=0;
@@ -423,7 +433,17 @@ void *print_stats(__rte_unused void *dummy)
                     printf("| %15lu ",cnt);
 
                     break;
-                case 6:
+				case 6:
+                    cnt=pps_tx_rate[j];
+                    printf("| %15lu ",cnt);
+
+                    break;
+				case 7:
+                    cnt=pps_rx_rate[j];
+                    printf("| %15lu ",cnt);
+
+                    break;
+                case 8:
                     printf("| %15s ",double_to_human_str((double)tx_rate[j],"bps").c_str());
                     break;
                 default:
@@ -572,6 +592,130 @@ void rxtx_main_loop(u_int32_t lcore_id, u_int16_t queue_id)
 	join_all_tests();
 }
 
+void rxtx_main_loop2(u_int32_t lcore_id, u_int16_t queue_id)
+{
+	rte_mbuf *pkts_burst[MAX_PKT_BURST];
+	uint16_t sent_packets = 0;
+
+	while(true)
+	{
+		u_int16_t nb_rx = rte_eth_rx_burst(1/* portid */, queue_id, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(0/*port id*/, queue_id, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+	}
+
+	join_all_tests();
+}
+
+void rxtx_main_loop3(u_int32_t lcore_id, u_int16_t queue_id)
+{
+	rte_mbuf *pkts_burst[MAX_PKT_BURST];
+	uint16_t sent_packets = 0;
+
+	while(true)
+	{
+		u_int16_t nb_rx = rte_eth_rx_burst(0/* portid */, queue_id, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(1/*port id*/, queue_id, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+
+		nb_rx = rte_eth_rx_burst(1/* portid */, queue_id, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(0/*port id*/, queue_id, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+	}
+
+	join_all_tests();
+}
+
+void rxtx_main_loop4(u_int32_t lcore_id, u_int16_t queue_id)
+{
+	rte_mbuf *pkts_burst[MAX_PKT_BURST];
+	uint16_t sent_packets = 0;
+
+	while(true)
+	{
+		u_int16_t nb_rx = rte_eth_rx_burst(0/* portid */, queue_id*2, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(1/*port id*/, queue_id*2, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+
+		nb_rx = rte_eth_rx_burst(1/* portid */, queue_id*2, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(0/*port id*/, queue_id*2, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+		nb_rx = rte_eth_rx_burst(0/* portid */, queue_id*2+1, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(1/*port id*/, queue_id*2+1, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+
+		nb_rx = rte_eth_rx_burst(1/* portid */, queue_id*2+1, pkts_burst, MAX_PKT_BURST);
+		if(nb_rx) {
+			sent_packets = 0;
+			do {
+				sent_packets = sent_packets + rte_eth_tx_burst(0/*port id*/, queue_id*2+1, &pkts_burst[sent_packets], nb_rx - sent_packets);
+			} while (nb_rx - sent_packets > 0);
+		}
+	}
+
+	join_all_tests();
+}
+
+#define NUM_QUEUE_GROUPS 1
+
+void rxtx_main_loop5(u_int32_t lcore_id, u_int16_t queue_id)
+{
+	enum {max_num_ports = 2, max_num_queues = NUM_QUEUE_GROUPS};
+	rte_mbuf *pkts_burst[2][4][MAX_PKT_BURST];
+	uint16_t rem_packets[2][4] = {0};
+	uint16_t offset[2][4] = {0};
+
+	while(true)
+	{
+		/////////////////// RX //////////////////////
+		for(uint16_t pid = 0; pid < max_num_ports; pid++) {
+			for(uint16_t qid = 0; qid < max_num_queues; qid++) {
+				if(rem_packets[pid][qid] == 0) {
+					rem_packets[pid][qid] = rte_eth_rx_burst(pid, queue_id*max_num_queues + qid, pkts_burst[pid][qid], MAX_PKT_BURST);
+					offset[pid][qid] = 0;
+				}
+			}
+		}
+
+		/////////////////// TX //////////////////////
+		for(uint16_t pid = 0; pid < max_num_ports; pid++) {
+			for(uint16_t qid = 0; qid < max_num_queues; qid++) {
+				if(rem_packets[pid][qid]) {
+					uint16_t ret = rte_eth_tx_burst((pid+1)%2, queue_id*max_num_queues + qid, &pkts_burst[pid][qid][offset[pid][qid]], rem_packets[pid][qid]);
+					offset[pid][qid] += ret;
+					rem_packets[pid][qid] -= ret;
+				}
+			}
+		}
+	}
+
+	join_all_tests();
+}
+
 static int main_loop(__rte_unused void *dummy)
 {
 	u_int32_t lcore_id = rte_lcore_id();
@@ -579,7 +723,7 @@ static int main_loop(__rte_unused void *dummy)
 	lcore_type = LCORE_T_NONE;
 	u_int32_t queue_id = 0;
 
-	if(is_single_port)
+	if(/* is_single_port */true)
 	{
 		for(u_int32_t i=0; i<lcoreids.size(); i++)
 		{
@@ -639,7 +783,7 @@ static int main_loop(__rte_unused void *dummy)
 		rx_main_loop(lcore_id, queue_id);
 		break;
 	case LCORE_T_RXTX:
-		rxtx_main_loop(lcore_id, queue_id);
+		rxtx_main_loop5(lcore_id, queue_id);
 		break;
 	}
 
@@ -715,10 +859,10 @@ int main(int argc, char **argv)
 	hn_tests_result = test_result_creator_handler(tmp_tests);
 
 
-	u_int32_t nb_mbuf = RTE_MAX((nb_ports * rx_lcoreids.size() * nb_rxd + nb_ports * rx_lcoreids.size() * MAX_PKT_BURST + nb_ports * rx_lcoreids.size() * nb_rxd + 
+	u_int32_t nb_mbuf = RTE_MAX((nb_ports * rx_lcoreids.size() * nb_rxd *NUM_QUEUE_GROUPS + nb_ports * rx_lcoreids.size() * MAX_PKT_BURST*NUM_QUEUE_GROUPS + nb_ports * rx_lcoreids.size() * nb_rxd + 
 									rx_lcoreids.size() * MEMPOOL_CACHE_SIZE), (unsigned)8192);
-	u_int32_t nb_tx_mbuf = RTE_MAX((nb_ports * tx_lcoreids.size() * nb_txd + nb_ports * tx_lcoreids.size() * MAX_PKT_BURST + nb_ports * tx_lcoreids.size() * nb_txd + 
-									tx_lcoreids.size() * MEMPOOL_CACHE_SIZE), (unsigned)8192);
+	u_int32_t nb_tx_mbuf = RTE_MAX((nb_ports * tx_lcoreids.size() * nb_txd*NUM_QUEUE_GROUPS + nb_ports * tx_lcoreids.size()*NUM_QUEUE_GROUPS * MAX_PKT_BURST + nb_ports * tx_lcoreids.size() * nb_txd*NUM_QUEUE_GROUPS + 
+									tx_lcoreids.size()*NUM_QUEUE_GROUPS * MEMPOOL_CACHE_SIZE), (unsigned)8192);
 
     uint16_t portid;
 	RTE_ETH_FOREACH_DEV(portid) 
@@ -759,7 +903,7 @@ int main(int argc, char **argv)
 			rte_exit(EXIT_FAILURE, "Cannot adjust number of descriptors: err=%d, port=%d\n", ret, portid);
 		
 		
-		ret = rte_eth_dev_configure(portid, (uint16_t)rx_lcoreids.size(), (uint16_t)tx_lcoreids.size(), &local_port_conf);
+		ret = rte_eth_dev_configure(portid, (uint16_t)rx_lcoreids.size()*NUM_QUEUE_GROUPS, (uint16_t)tx_lcoreids.size()*NUM_QUEUE_GROUPS, &local_port_conf);
 		if (ret < 0) 
 		{
 			printf("\n");
@@ -780,9 +924,13 @@ int main(int argc, char **argv)
 
 			rte_eth_txconf *txconf = &dev_info.default_txconf;
 			txconf->offloads = local_port_conf.txmode.offloads;
-			ret = rte_eth_tx_queue_setup(portid, i, nb_txd, socketid, txconf);
-			if (ret < 0)
-				rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n", ret, portid);
+
+			for(uint16_t qid = 0; qid < NUM_QUEUE_GROUPS; qid++) {
+				ret = rte_eth_tx_queue_setup(portid, i*NUM_QUEUE_GROUPS + qid, nb_txd, socketid, txconf);
+				if (ret < 0)
+					rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n", ret, portid);
+			}
+
 		}
 
 		// initialize rx queues
@@ -799,9 +947,12 @@ int main(int argc, char **argv)
 
 			rte_eth_rxconf *rxq_conf = &dev_info.default_rxconf;
 			rxq_conf->offloads = local_port_conf.rxmode.offloads;
-			ret = rte_eth_rx_queue_setup(portid, i, nb_rxd, socketid, rxq_conf, pktmbuf_pool[portid][socketid]);
-			if (ret < 0)
-				rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n", ret, portid);
+
+			for(uint16_t qid = 0; qid < NUM_QUEUE_GROUPS; qid++) {
+				ret = rte_eth_rx_queue_setup(portid, i*NUM_QUEUE_GROUPS + qid, nb_rxd, socketid, rxq_conf, pktmbuf_pool[portid][socketid]);
+				if (ret < 0)
+					rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n", ret, portid);
+			}
 		}
 
 		/* Start device */

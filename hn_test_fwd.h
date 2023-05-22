@@ -1,14 +1,18 @@
-#ifndef HN_TEST_FDIR_H
-#define HN_TEST_FDIR_H
-#include "hn_test.h"
-#include <memory>
+#ifndef HN_TEST_FWD_H
+#define HN_TEST_FWD_H
 
-class hn_test_fdir: public hn_test
+#include <iostream>
+#include <memory>
+#include <rte_mbuf.h>
+#include <unordered_map>
+#include <rte_hash_crc.h>
+#include "hn_test.h"
+
+
+class hn_test_fwd: public hn_test
 {
 private:
-
-    enum {num_of_rounds = 100, round_num_pkts = 10000, accepted_tos=0x01};
-    u_int16_t fdir_lcore_id = 1;
+    enum {num_of_rounds = 100, round_num_pkts = 10000};
     u_int8_t src_mac_addr[6] = {0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a};
     u_int8_t dst_mac_addr[6] = {0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b};
 
@@ -18,8 +22,6 @@ private:
     u_int32_t ip_dst_step = 1;
     u_int32_t ip_src;
     u_int32_t ip_dst;
-    u_int8_t ip_tos = 0;
-    u_int8_t ip_tos_step = 1;
 
     u_int16_t src_port = 31000;
     u_int16_t src_port_step = 0;
@@ -33,16 +35,14 @@ private:
     u_int32_t round_counter = 0;
     u_int32_t round_pkt_counter = 0;
 
-    u_int32_t num_recvd_pkts = 0;
-    u_int32_t num_conflicts_pkts = 0;
-
-    void create_base_pkt();
+    void create_base_pkt_tcp();
+    void create_base_pkt_udp();
 
     void update_steps();
 
 public:
-    hn_test_fdir(u_int32_t lcore_id);
-    ~hn_test_fdir();
+    hn_test_fwd(u_int32_t lcore_id);
+    ~hn_test_fwd();
 
     /**
      * @brief 
@@ -50,7 +50,7 @@ public:
      * @param lcore 
      * @return hn_test* 
      */
-    static hn_test* create(u_int32_t lcore) { return new hn_test_fdir(lcore);}
+    static hn_test* create(u_int32_t lcore) { return new hn_test_fwd(lcore);}
 
     /**
      * @brief Get a burst of mbufs from the given mempool and prepared them for the test.
@@ -91,26 +91,25 @@ public:
      */
     void show_the_test_results() override;
 
-    void update_nic_global_config(__rte_unused hn_driver *nic_driver, __rte_unused u_int16_t port_id, __rte_unused rte_eth_conf &port_conf) override {}
+    void update_nic_global_config(hn_driver *nic_driver, u_int16_t port_id, rte_eth_conf &port_conf) override;
 
-    void update_nic_after_start(hn_driver *nic_driver, u_int16_t port_id) override;
+    void update_nic_after_start(__rte_unused hn_driver *nic_driver, __rte_unused u_int16_t port_id) override {}
 
-    u_int32_t get_lcore_id() {return lcore_id;}
-
-    uint32_t get_num_recv_pkts() {return num_recvd_pkts;}
     
-    uint32_t get_num_conflicts() {return num_conflicts_pkts;}
 };
 
 
-class hn_test_result_fdir: public hn_test_result
+class hn_test_result_fwd: public hn_test_result
 {
 public:
-    hn_test_result_fdir(std::vector<hn_test *> tests):hn_test_result(tests){}
+    hn_test_result_fwd(std::vector<hn_test *> tests)
+        :hn_test_result(tests) {}
+
+
+    static hn_test_result_fwd* create(std::vector<hn_test *> tests) { return new hn_test_result_fwd(tests);}
 
     void show_test_results() override;
-
-    static hn_test_result_fdir* create(std::vector<hn_test *> tests) { return new hn_test_result_fdir(tests);}
+    
 };
 
-#endif // HN_TEST_FDIR_H
+#endif // HN_TEST_FWD_H
